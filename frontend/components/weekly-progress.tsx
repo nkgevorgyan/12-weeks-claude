@@ -1,213 +1,127 @@
 "use client"
 
-import { useState } from "react"
-import { useAuth } from "@/hooks/use-auth"
-import { useToast } from "@/hooks/use-toast"
-import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
-import { Textarea } from "@/components/ui/textarea"
-import { Progress } from "@/components/ui/progress"
-import { Badge } from "@/components/ui/badge"
+import { useMemo } from "react"
+import { Bar, BarChart, ResponsiveContainer, XAxis, YAxis, Tooltip, Legend } from "recharts"
 import { Goal } from "@/lib/types"
-import { goalsApi } from "@/lib/api"
+import { Card, CardContent } from "@/components/ui/card"
 
-interface DailyCheckInProps {
+interface WeeklyProgressProps {
   goals: Goal[]
 }
 
-interface CheckInGoal extends Goal {
-  notes: string
-  todayValue: number
-  submitting: boolean
+// Helper function to get the past 7 days
+const getPast7Days = () => {
+  const days = []
+  for (let i = 6; i >= 0; i--) {
+    const date = new Date()
+    date.setDate(date.getDate() - i)
+    days.push({
+      date,
+      name: date.toLocaleDateString('en-US', { weekday: 'short' }),
+      fullDate: date.toISOString().split('T')[0]
+    })
+  }
+  return days
 }
 
-export function DailyCheckIn({ goals }: DailyCheckInProps) {
-  const { token } = useAuth()
-  const { toast } = useToast()
-  const [checkInGoals, setCheckInGoals] = useState<CheckInGoal[]>(
-    goals.map(goal => ({
-      ...goal,
-      notes: "",
-      todayValue: 0,
-      submitting: false
-    }))
+export function WeeklyProgress({ goals }: WeeklyProgressProps) {
+  // Filter to only include active goals with recent progress
+  const activeGoals = goals.filter(goal => 
+    !goal.is_completed || 
+    (goal.is_completed && new Date(goal.completed_at!).getTime() > Date.now() - 7 * 24 * 60 * 60 * 1000)
   )
 
-  const handleInputChange = (id: number, value: string) => {
-    setCheckInGoals(
-      checkInGoals.map((goal) => {
-        if (goal.id === id) {
-          const newValue = Math.max(0, Number.parseFloat(value) || 0)
-          return { ...goal, todayValue: newValue }
-        }
-        return goal
-      }),
-    )
-  }
-
-  const handleNotesChange = (id: number, notes: string) => {
-    setCheckInGoals(
-      checkInGoals.map((goal) => {
-        if (goal.id === id) {
-          return { ...goal, notes }
-        }
-        return goal
-      }),
-    )
-  }
-
-  const handleSubmit = async (goal: CheckInGoal) => {
-    if (!token) return
-    
-    // Update local state to show loading
-    setCheckInGoals(
-      checkInGoals.map((g) => {
-        if (g.id === goal.id) {
-          return { ...g, submitting: true }
-        }
-        return g
-      })
-    )
-    
-    try {
-      // Submit the progress
-      await goalsApi.logProgress(token, goal.id, {
-        value: goal.todayValue,
-        notes: goal.notes
-      })
+  // Get past 7 days for chart
+  const days = getPast7Days()
+  
+  // Mock progress data for visualization
+  // In a real implementation, this would come from the API's progress logs
+  const mockProgressData = useMemo(() => {
+    return days.map(day => {
+      // Create a data point for each day
+      const dataPoint: Record<string, any> = {
+        name: day.name,
+        date: day.fullDate
+      }
       
-      // Update the goal in local state
-      setCheckInGoals(
-        checkInGoals.map((g) => {
-          if (g.id === goal.id) {
-            const newCurrentValue = g.current_value + g.todayValue
-            const isCompleted = newCurrentValue >= g.target_value
-            
-            return { 
-              ...g, 
-              submitting: false,
-              current_value: newCurrentValue,
-              is_completed: isCompleted,
-              // Clear the form
-              todayValue: 0,
-              notes: ""
-            }
+      // Add a random progress value for each goal
+      activeGoals.forEach(goal => {
+        // Use goal ID as key to ensure uniqueness
+        const key = `goal_${goal.id}`
+        
+        // For completed goals, show progress on the completion day
+        if (goal.is_completed && goal.completed_at) {
+          const completedDate = new Date(goal.completed_at).toISOString().split('T')[0]
+          dataPoint[key] = completedDate === day.fullDate ? 
+            (Math.random() * 0.3 + 0.7) * goal.target_value : // High progress on completion day
+            Math.random() * 0.5 * goal.target_value // Some progress on other days
+        } else {
+          // For active goals, show random progress
+          dataPoint[key] = Math.random() * goal.target_value
+          
+          // Ensure the most recent day has the current progress value
+          if (day.fullDate === days[days.length - 1].fullDate) {
+            dataPoint[key] = goal.current_value
           }
-          return g
-        })
-      )
-      
-      toast({
-        title: "Progress logged",
-        description: `Progress for ${goal.title} has been logged successfully.`,
+        }
       })
-    } catch (error) {
-      console.error("Failed to log progress:", error)
       
-      // Reset submitting state
-      setCheckInGoals(
-        checkInGoals.map((g) => {
-          if (g.id === goal.id) {
-            return { ...g, submitting: false }
-          }
-          return g
-        })
-      )
-      
-      toast({
-        title: "Failed to log progress",
-        description: "There was an error logging your progress. Please try again.",
-        variant: "destructive"
-      })
-    }
+      return dataPoint
+    })
+  }, [activeGoals, days])
+  
+  // Generate colors for each goal
+  const goalColors = {
+    goal_1: "#4f46e5", // indigo
+    goal_2: "#0ea5e9", // sky
+    goal_3: "#10b981", // emerald
+    goal_4: "#f59e0b", // amber
+    goal_5: "#ef4444", // red
   }
-
-  // Filter to only show active goals
-  const activeGoals = checkInGoals.filter(goal => !goal.is_completed)
-
+  
   if (activeGoals.length === 0) {
     return (
-      <div className="flex flex-col items-center justify-center text-center p-6">
-        <h3 className="text-lg font-medium">No active goals</h3>
-        <p className="text-sm text-muted-foreground mt-1">
-          All your goals are completed for today. Great job!
-        </p>
-        <Button className="mt-4" asChild>
-          <a href="/goals">Create a new goal</a>
-        </Button>
+      <div className="flex flex-col items-center justify-center h-[300px] text-center">
+        <p className="text-muted-foreground">No active goals to display</p>
       </div>
     )
   }
 
   return (
-    <div className="space-y-6">
-      {activeGoals.map((goal) => (
-        <div key={goal.id} className="rounded-lg border p-4">
-          <div className="flex flex-wrap items-start justify-between gap-2">
-            <div>
-              <h3 className="font-medium">{goal.title}</h3>
-              <div className="mt-1 text-sm text-muted-foreground">
-                <Badge variant="outline" className="mr-2">
-                  {goal.team_id ? `Team Goal` : "Personal"}
-                </Badge>
-                Target: {goal.target_value} {goal.unit}
-              </div>
-            </div>
-            <Badge variant="outline">
-              {goal.current_value} / {goal.target_value} {goal.unit}
-            </Badge>
-          </div>
-
-          <div className="mt-4 space-y-4">
-            <div>
-              <div className="mb-2 flex items-center justify-between">
-                <label htmlFor={`goal-${goal.id}`} className="text-sm font-medium">
-                  Progress today
-                </label>
-                <span className="text-sm text-muted-foreground">
-                  {goal.todayValue} {goal.unit}
-                </span>
-              </div>
-              <div className="flex items-center gap-2">
-                <Input
-                  id={`goal-${goal.id}`}
-                  type="number"
-                  min="0"
-                  step="0.1"
-                  value={goal.todayValue || ""}
-                  onChange={(e) => handleInputChange(goal.id, e.target.value)}
-                  disabled={goal.submitting}
-                />
-                <span className="text-sm">{goal.unit}</span>
-              </div>
-              <Progress 
-                value={(goal.current_value / goal.target_value) * 100} 
-                className="mt-2" 
-              />
-            </div>
-            <div>
-              <label htmlFor={`notes-${goal.id}`} className="mb-2 block text-sm font-medium">
-                Notes (optional)
-              </label>
-              <Textarea
-                id={`notes-${goal.id}`}
-                placeholder="Add any notes or reflections about today's progress..."
-                value={goal.notes}
-                onChange={(e) => handleNotesChange(goal.id, e.target.value)}
-                disabled={goal.submitting}
-                className="resize-none"
-              />
-            </div>
-            <Button 
-              onClick={() => handleSubmit(goal)} 
-              disabled={goal.submitting || goal.todayValue <= 0} 
-              className="w-full"
-            >
-              {goal.submitting ? "Logging..." : "Log Progress"}
-            </Button>
-          </div>
-        </div>
-      ))}
+    <div className="h-[300px] w-full">
+      <ResponsiveContainer width="100%" height="100%">
+        <BarChart data={mockProgressData}>
+          <XAxis dataKey="name" />
+          <YAxis />
+          <Tooltip 
+            formatter={(value, name) => {
+              // Extract the goal ID from the name (goal_1 -> 1)
+              const goalId = parseInt(name.split('_')[1])
+              const goal = activeGoals.find(g => g.id === goalId)
+              // Format the value with the goal unit
+              return [`${value.toFixed(1)} ${goal?.unit || ''}`, goal?.title || name]
+            }}
+          />
+          <Legend 
+            formatter={(value) => {
+              // Extract the goal ID from the value (goal_1 -> 1)
+              const goalId = parseInt(value.split('_')[1])
+              const goal = activeGoals.find(g => g.id === goalId)
+              // Return the goal title
+              return goal?.title || value
+            }}
+          />
+          {activeGoals.map((goal, index) => (
+            <Bar 
+              key={goal.id} 
+              dataKey={`goal_${goal.id}`} 
+              name={`goal_${goal.id}`}
+              fill={goalColors[`goal_${index + 1}` as keyof typeof goalColors] || "#8884d8"}
+              radius={[4, 4, 0, 0]} 
+            />
+          ))}
+        </BarChart>
+      </ResponsiveContainer>
     </div>
   )
 }
